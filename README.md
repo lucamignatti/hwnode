@@ -53,7 +53,7 @@ HW-NODE was evaluated against baseline MLPs on `LunarLander-v3` to test architec
 | **mlp-large**          | 136,581     | 228.8 ± 9.8             | Large MLP performs *worse* than the small MLP. |
 
 **Critical Analysis: Inconclusive RL Scaling**
-This data does *not* prove HW-NODE is superior to MLPs. In fact, it highlights a flaw in using this environment for scaling comparisons:
+This data highlights a flaw in using this environment for scaling comparisons:
 - **Scaling Inverse:** The largest models (`mlp-large`, `चेbyshev-scaled`) perform worse than the smallest model (`mlp-narrow`). This indicates that larger networks are simply under-training within the 500K timestep budget, while smaller dense networks iterate faster.
 - **The Small-MLP Dominance:** The 9.5K MLP runs the fastest and performs the best. While the 6.3K HW-NODE proves the architecture works natively, without explicitly mapping the parameter boundary where small MLPs catastrophically collapse, we cannot claim definitive compression supremacy here. 
 - **Takeaway:** Simple RL environments like LunarLander are insufficient for evaluating HW-NODE. To see where HW-NODE's spectral dynamics truly outperform standard linear depth, the architecture must be pushed into complex sequence tasks (like Language Modeling) where MLPs natively run out of representative geometry.
@@ -61,7 +61,7 @@ This data does *not* prove HW-NODE is superior to MLPs. In fact, it highlights a
 
 ## 🧠 Scaling Efficacy: Language Modeling (Parameter Golf Proxy)
 
-We stripped HW-NODE of its Gymnasium environment wrapping and applied it exclusively as the sequence transition block on an RTX 5090 proxy framework matching a 25M Parameter-Golf limit framework (`WARMDOWN_ITERS=350`).
+We applied HWNODE as a direct replacement for MLPs on an RTX 5090 on OpenAI Parameter-Golf (`WARMDOWN_ITERS=350`).
 
 *Metric: Exact Sliding Window Inference (Lower is better).*
 
