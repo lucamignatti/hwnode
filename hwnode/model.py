@@ -20,7 +20,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 def _relu_squared(x: torch.Tensor) -> torch.Tensor:
-    return torch.relu(x).square()
+    return torch.relu(x).clamp(min=0, max=1e4).square()
 
 _ACTIVATIONS: dict[str, callable] = {
     "relu_squared": _relu_squared,
@@ -125,7 +125,9 @@ class SharedHWNODE(nn.Module):
         """Output-side nonlinearity psi."""
         y = F.leaky_relu(x, negative_slope=self.negative_slope)
         if self.square_output:
-            y = y.square()
+            # Safely clamp before squaring to prevent fp32 NaN explosion 
+            # across deep virtual residual recurrence (e.g. at dimension 512, order 8)
+            y = y.clamp(min=-1e4, max=1e4).square()
         return y
 
     def _spectrally_normalized_A(self) -> Tensor:
