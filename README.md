@@ -62,24 +62,7 @@ This data highlights a flaw in using this environment for scaling comparisons:
 
 ## Language Modeling (Parameter Golf)
 
-We applied HWNODE as a direct replacement for MLPs on an RTX 5090 and RX 6800 XT on the OpenAI Parameter-Golf challenge (Next-Token Bigram framework, `WARMDOWN_ITERS=350`).
-
-### 1. The Pre-Corrected Prototype (Module-Stacked)
-These measurements map the older "stacked" unshared prototype run on an RTX 5090 without virtual depth.
-*Metric: `final_int6_sliding_window_exact` (lower is better).*
-
-| Config | Params | Step Avg | Final Metric |
-|---|---:|---:|---:|
-| **`STATE_DIM=768`, Order 2 no bias/gates**| **24.8M** | **1393 ms** | **2.416** |
-| `STATE_DIM=864`, Order 2 | 27.6M | 1530 ms | 2.720 |
-| `STATE_DIM=864`, Order 2 + Biases | 27.6M | 1548 ms | 2.738 |
-| `STATE_DIM=864`, Order 2 + Biases + Gates | 27.6M | 1550 ms | 2.779 |
-| `STATE_DIM=960`, Order 2 | 30.6M | 1577 ms | 2.909 |
-
----
-
-### 2. Corrected Shared-Depth Architecture (RX 6800 XT)
-These tests rigorously measure the final **weight-shared** mathematically correct HW-NODE against identical MLPs. All runs strictly evaluated on quantized `int6` payloads.
+We applied HWNODE as a direct replacement for MLPs on an RTX 5090 and RX 6800 XT on the OpenAI Parameter-Golf challenge (Next-Token Bigram framework, `WARMDOWN_ITERS=350`). These tests rigorously measure the final **weight-shared** mathematically correct HW-NODE against identical MLPs. All runs strictly evaluated on quantized `int6` payloads.
 
 *Metric: `final_int6_roundtrip_exact` (lower is better).*
 
