@@ -19,12 +19,14 @@ def main():
     # Switch to BipedalWalker-v3 to avoid LunarLander ceilings
     parser.add_argument("--env", type=str, default="BipedalWalker-v3")
     parser.add_argument("--num-seeds", type=int, default=3)
-    parser.add_argument("--total-timesteps", type=int, default=1_500_000)
+    parser.add_argument("--total-timesteps", type=int, default=1_500_000, help="Absolute max steps if time not hit")
+    parser.add_argument("--max-wallclock", type=int, default=600, help="Max time per run in seconds to guarantee strict compute parity")
     parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()
     
     env_id = args.env
     total_timesteps = args.total_timesteps
+    max_wallclock = args.max_wallclock
     num_seeds = args.num_seeds
     use_wandb = not args.no_wandb
 
@@ -39,7 +41,7 @@ def main():
     print(f"\n{'='*80}")
     print(f" STARTING EXTREME COMPRESSION SUITE ON: {env_id} | Seeds: {num_seeds}")
     print(f" Strict Parameter Constraint: ~5.9k Params")
-    print(f" Budget allowed: {total_timesteps:,} steps")
+    print(f" Budget enforced: {max_wallclock} seconds per run (or {total_timesteps:,} max steps)")
     print(f"{'='*80}\n")
 
     # Name, BackboneClass, hidden_dim, state_dim, num_blocks (for MLP it's actual layers, for HW-NODE it's virtual layers), order
@@ -94,6 +96,7 @@ def main():
                 model=model,
                 seed=seed,
                 total_timesteps=total_timesteps,
+                max_wallclock_seconds=max_wallclock,
                 wandb_run=wandb_run,
                 label=name,
                 env_kwargs={}  # Continuous strictly inferred by FlexActor Critic natively

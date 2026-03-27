@@ -341,6 +341,7 @@ def train_agent(
     max_grad_norm: float = 0.5,
     num_epochs: int = 4,
     batch_size: int = 64,
+    max_wallclock_seconds: int = 0,
     wandb_run=None,
     label: str = "",
     env_kwargs: dict = None,
@@ -373,7 +374,7 @@ def train_agent(
     start_time = time.time()
     total_updates = total_timesteps // rollout_steps
 
-    while global_step < total_timesteps:
+    while (global_step < total_timesteps) and (max_wallclock_seconds <= 0 or (time.time() - start_time) < max_wallclock_seconds):
         buffer.reset()
         model.eval()
 
