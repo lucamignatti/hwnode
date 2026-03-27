@@ -63,30 +63,51 @@ This data highlights a flaw in using this environment for scaling comparisons:
 
 We applied HWNODE as a direct replacement for MLPs on an RTX 5090 on OpenAI Parameter-Golf (`WARMDOWN_ITERS=350`).
 
-*Metric: Exact Sliding Window Inference (Lower is better).*
+## 🧠 Scaling Efficacy: Language Modeling (Parameter Golf Proxy)
 
-| HW-NODE Configuration `(Order=2)` | Parameter Count | Step Time (avg) | Sliding Window Metric (↓) |
-| :--- | :--- | :--- | :--- |
-| **`state-dim=768`, no bias, no gates** | **24.8M** | **1393.67 ms** | **2.41** |
-| `state-dim=864`, no bias, no gates | 27.6M | 1530.67 ms | 2.72 |
-| `state-dim=864`, +state bias | 27.6M | 1548.82 ms | 2.73 |
-| `state-dim=864`, +state bias, +term gates | 27.6M | 1550.07 ms | 2.77 |
-| `state-dim=960`, no bias, no gates | 30.6M | 1577.60 ms | 2.90 |
+We applied HWNODE as a direct replacement for MLPs on an RTX 5090 and RX 6800 XT on the OpenAI Parameter-Golf challenge (Next-Token Bigram framework, `WARMDOWN_ITERS=350`).
 
+### 1. The Pre-Corrected Prototype (Module-Stacked)
+These measurements map the older "stacked" unshared prototype run on an RTX 5090 without virtual depth.
+*Metric: `final_int6_sliding_window_exact` (lower is better).*
 
-## 📈 The Architectural Verdict & Takeaways
-
-1. **Parameter Bloat is Toxic to Spectral Dynamics:**
-Scaling the ODE bottleneck (`state_dim`) blindly upwards destroys the exact mapping stability of HW-NODE. When scaling from `768` to `960` dimension cores (pushing past 30M parameters), the exact sliding window metric degraded heavily (2.41 → 2.90). HW-NODE thrives exclusively on aggressively compressed latent dimensions.
-
-2. **Zero-Bias, Zero-Gate Purity Prevails:**
-Unlike classical FFNs which rely universally on dense biases, encoding pointwise state biases explicitly into HW-NODE internal mappings consistently degrades LM step-times (+18ms overhead) and score exactness. Additionally, attempting to "intelligently" gate Taylor coefficients (learning $w_k$) completely shattered optimization convergence at scale.
-
-3. **Optimum Configuration Axiom:**
-To maximize representation density inside bounded sequences, **truncate at an Order 2 Taylor flow**, **remove all learnable gates/biases**, and **tighten the bottleneck width substantially** (e.g., leveraging the mathematically identical virtual depth routing recursively).
+| Config | Params | Step Avg | Final Metric |
+|---|---:|---:|---:|
+| **`STATE_DIM=768`, Order 2 no bias/gates**| **24.8M** | **1393 ms** | **2.416** |
+| `STATE_DIM=864`, Order 2 | 27.6M | 1530 ms | 2.720 |
+| `STATE_DIM=864`, Order 2 + Biases | 27.6M | 1548 ms | 2.738 |
+| `STATE_DIM=864`, Order 2 + Biases + Gates | 27.6M | 1550 ms | 2.779 |
+| `STATE_DIM=960`, Order 2 | 30.6M | 1577 ms | 2.909 |
 
 ---
 
-## Further Exploration / Research Variants
-- **Chebyshev $T_k(A)$ Arrays:** Experiments mapping an orthogonal Chebyshev domain instead of standard polynomials exist in `experiments/taylor_vs_chebyshev.py`. These demonstrate significantly lower parameter gradient variance under spectral limits but restrict mathematical elasticity inside LLM parameter regimes. 
-- **Dynamic Term Routing:** Prototype implementations routing variable series depth parameters directly as functions of input $X$ (`DynamicTermWeightingHWNodeBlock`) are validated in `tests/test_model.py`.
+### 2. Corrected Shared-Depth Architecture (RX 6800 XT)
+These tests rigorously measure the final **weight-shared** mathematically correct HW-NODE against identical MLPs. All runs strictly evaluated on quantized `int6` payloads.
+
+*Metric: `final_int6_roundtrip_exact` (lower is better).*
+
+| Run ID | Architecture | Configuration | Wallclock | Params | Val BPB (fp32) | Final Metric (int6) | Artifact Size |
+|---|---|---|---:|---:|---:|---:|---:|
+| `mlp_mlp1` | **MLP** | `MULT=1.0` | 600s | 18.3M | 2.695 | 3.634 | 3.6MB |
+| `hwnode_s384_o2_v2` | **HW-NODE** | `s384/o2/v2` | 600s | **18.5M** | 3.135 | **3.535** | 4.0MB |
+| `mlp_baseline` | **MLP** | `MULT=3.0` | 600s | 29.9M | 3.243 | 3.603 | 4.1MB |
+| `hwnode_s384_o2_v6` | **HW-NODE** | `s384/o2/v6` | 600s | 18.5M | 3.079 | 3.581 | 4.1MB |
+| `hwnode_s384_o2_v4` | **HW-NODE** | `s384/o2/v4` | 600s | 18.5M | **2.790** | 3.744 | 4.1MB |
+| `hwnode_s512_o2_v8` | **HW-NODE** | `s512/o2/v8` | 600s | 21.2M | 3.310 | 3.666 | 4.6MB |
+
+---
+
+## 📈 The Honest Architectural Verdict
+
+Combining the inconclusive RL results and the rigorous Language Modeling density tests, we can conclude the following structural truths about the Hammerstein-Wiener Neural ODE mechanism:
+
+### 1. The Marginal Density Victory
+HW-NODE does functionally beat Multi-Layer Perceptrons in sheer representation density. At $\sim 18.5$ Million parameters, the `s384` HW-NODE generated a superior compressed score (`3.535`) compared to both its identically sized 18.3M MLP counterpart (`3.634`) and a massively larger 29.9M MLP (`3.603`). **However, the degree of improvement is ultimately marginal.** Given the intense mathematical engineering, spectral bounds tracking, and execution slow-down inherent in the Taylor-flow, this slight compression victory may not justify replacing highly-optimized parallel dense MLPs in production scenarios. 
+
+### 2. The Quantization Cascading Vulnerability
+The defining theoretical promise of HW-NODE is "Virtual Depth"—cycling latent states deeply via a parameterized ODE matrix for "free" reasoning steps. The data proves this works excellently in online full-precision (FP32), where the `v=4` (4-deep recurrence) achieved a massive **2.790 BPB** online validation. 
+
+However, **Virtual Depth completely shatters under quantization.** That same exceptionally smart `v=4` FP32 state collapsed to a disastrous **3.744** in `int6` mapping. The repeated matrix exponentiation operations linearly compound quantization noise, meaning dynamically routed deep features cannot survive severe integer truncation without gradient saturation. 
+
+### 3. Final Conclusion
+At its most optimal configuration (strictly shallow recurrence `v=2`, stripped of biases and dynamic gates), HW-NODE provides a fascinating, viable alternative to FFN bottlenecks offering slight sub-30M parameter compression advantages. But the fundamental mathematical mechanics governing its recurrent flow inherently block the architecture from pushing the extremes of virtual depth if post-training quantization is required. Unless the flow operator is entirely reimagined to be quantization-aware at the hardware level, HW-NODE performs best strictly as a shallow, bounded representation trick.

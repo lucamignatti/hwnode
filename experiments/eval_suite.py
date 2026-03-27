@@ -106,12 +106,11 @@ def main():
             ("chebyshev-scaled", ChebyshevHWNodeNetwork, 128, 32, 3, 6),
         ]
     else:
-        # Massive scaled architectures to thoroughly push the weight-tying limits against Chebyshev
+        # Massive scaled architectures pushing the weight-tying limits (Chebyshev excluded due to 4.3x orthogonal penalty)
         variants = [
             ("hwnode-xl", HWNodeNetwork, 256, 64, 4, 8),
-            ("chebyshev-xl", ChebyshevHWNodeNetwork, 256, 64, 4, 8),
             ("hwnode-xxl", HWNodeNetwork, 512, 128, 4, 8),
-            ("chebyshev-xxl", ChebyshevHWNodeNetwork, 512, 128, 4, 8),
+            ("hwnode-xxxl", HWNodeNetwork, 1024, 256, 4, 8),
         ]
 
     for seed in range(num_seeds):
