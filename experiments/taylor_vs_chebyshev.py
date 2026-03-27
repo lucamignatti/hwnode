@@ -398,9 +398,9 @@ def train_agent(
             done = terminated or truncated
 
             if continuous:
-                buffer.store(obs, action_np, reward, done, log_prob.item(), value.item())
+                buffer.store(obs, action_np, float(reward), done, log_prob.item(), value.item())
             else:
-                buffer.store(obs, action.item(), reward, done, log_prob.item(), value.item())
+                buffer.store(obs, action.item(), float(reward), done, log_prob.item(), value.item())
 
             obs = next_obs
             episode_reward += reward
