@@ -42,18 +42,21 @@ PYTHONPATH=. python experiments/eval_suite.py --only-scaled
 
 ## 🏎️ Empirical Results: Reinforcement Learning (PPO Baseline)
 
-HW-NODE was evaluated against baseline MLPs on `LunarLander-v3` to test architectural efficiency and parameter density. The results demonstrate that **HW-NODE drastically outperforms MLPs in parameter efficiency**, both at the extreme lower bounds and at scale.
+HW-NODE was evaluated against baseline MLPs on `LunarLander-v3` to test architectural efficiency and parameter density. 
 
-| Architecture           | Parameters  | Mean Final Reward ± Std | Architectural Implication |
-|:-----------------------|:------------|:------------------------|:--------------------------|
-| **hwnode-standard**    | **6,343**   | **215.4 ± 13.3**        | **Solves the environment with the absolute minimum footprint.** Validates that virtual layer routing compresses policies vastly better than shallow networks. |
-| **mlp-narrow**         | 9,573       | 240.6 ± 9.1             | Minimum functional MLP baseline. Requires 50% more parameters than `hwnode-standard`. |
-| **hwnode-scaled**      | **21,895**  | **228.5 ± 17.1**        | **Matches asymptotic performance of massive MLPs using 84% fewer parameters.** |
-| **chebyshev-scaled**   | **61,295**  | **230.4 ± 28.8**        | **Actively beats large MLPs.** The orthogonal ODE basis maps continuous control states with higher fidelity at scale than dense layers. |
-| **mlp-large**          | 136,581     | 228.8 ± 9.8             | Vastly over-parameterized; fails to beat the 61K Chebyshev-NODE and is efficiency-matched by the 21K HW-NODE. |
+| Architecture           | Parameters  | Mean Final Reward ± Std | Observation |
+|:-----------------------|:------------|:------------------------|:------------|
+| **hwnode-standard**    | 6,343       | 215.4 ± 13.3            | Mathematically "solves" the environment (>200) with a very small footprint. |
+| **mlp-narrow**         | **9,573**   | **240.6 ± 9.1**         | **Best overall performer.** Smaller size trains faster and achieves higher asymptotic mean. |
+| **hwnode-scaled**      | 21,895      | 228.5 ± 17.1            | Sits perfectly in the middle of the pack, failing to beat the narrow MLP. |
+| **chebyshev-scaled**   | 61,295      | 230.4 ± 28.8            | Equivalent asymptotic reward to scaled standard HW-NODE with higher parameter cost. |
+| **mlp-large**          | 136,581     | 228.8 ± 9.8             | Large MLP performs *worse* than the small MLP. |
 
-**The HW-NODE Efficiency Win:**
-The data proves a stark representational advantage for the Hammerstein-Wiener Neural ODE. To achieve a stable asymptotic control mapping of ~228-230, a standard MLP must scale to **136K parameters**. The `hwnode-scaled` configuration identically matches this capability utilizing only **21K parameters** via its mathematically tied flow matrix. Furthermore, the `chebyshev-scaled` model explicitly beats the large MLP baseline using less than half the parameter budget.
+**Critical Analysis: Inconclusive RL Scaling**
+This data does *not* prove HW-NODE is superior to MLPs. In fact, it highlights a flaw in using this environment for scaling comparisons:
+- **Scaling Inverse:** The largest models (`mlp-large`, `चेbyshev-scaled`) perform worse than the smallest model (`mlp-narrow`). This indicates that larger networks are simply under-training within the 500K timestep budget, while smaller dense networks iterate faster.
+- **The Small-MLP Dominance:** The 9.5K MLP runs the fastest and performs the best. While the 6.3K HW-NODE proves the architecture works natively, without explicitly mapping the parameter boundary where small MLPs catastrophically collapse, we cannot claim definitive compression supremacy here. 
+- **Takeaway:** Simple RL environments like LunarLander are insufficient for evaluating HW-NODE. To see where HW-NODE's spectral dynamics truly outperform standard linear depth, the architecture must be pushed into complex sequence tasks (like Language Modeling) where MLPs natively run out of representative geometry.
 
 
 ## 🧠 Scaling Efficacy: Language Modeling (Parameter Golf Proxy)
