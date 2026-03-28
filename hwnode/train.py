@@ -55,8 +55,8 @@ def train(cfg: ExperimentConfig, wandb_run=None) -> dict:
     continuous = isinstance(env.action_space, gym.spaces.Box)
     if continuous:
         act_dim = env.action_space.shape[0]
-        act_low = torch.as_tensor(env.action_space.low, dtype=torch.float32, device=device)
-        act_high = torch.as_tensor(env.action_space.high, dtype=torch.float32, device=device)
+        act_low_np = env.action_space.low
+        act_high_np = env.action_space.high
     else:
         act_dim = env.action_space.n
 
@@ -108,7 +108,7 @@ def train(cfg: ExperimentConfig, wandb_run=None) -> dict:
             if continuous:
                 action_np = action.squeeze(0).cpu().numpy()
                 # Clip to action bounds
-                action_np = np.clip(action_np, env.action_space.low, env.action_space.high)
+                action_np = np.clip(action_np, act_low_np, act_high_np)
                 env_action = action_np
             else:
                 env_action = action.item()
@@ -184,7 +184,7 @@ def train(cfg: ExperimentConfig, wandb_run=None) -> dict:
                     + cfg.ppo.entropy_coeff * entropy_loss
                 )
 
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.ppo.max_grad_norm)
                 optimizer.step()

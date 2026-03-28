@@ -351,6 +351,9 @@ def train_agent(
     env = gym.make(env_id, **(env_kwargs or {}))
     continuous = isinstance(env.action_space, gym.spaces.Box)
     act_dim = env.action_space.shape[0] if continuous else env.action_space.n
+    if continuous:
+        act_low_np = env.action_space.low
+        act_high_np = env.action_space.high
 
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -390,7 +393,7 @@ def train_agent(
 
             if continuous:
                 action_np = action.squeeze(0).cpu().numpy()
-                action_np = np.clip(action_np, env.action_space.low, env.action_space.high)
+                action_np = np.clip(action_np, act_low_np, act_high_np)
                 env_action = action_np
             else:
                 env_action = action.item()
@@ -440,7 +443,7 @@ def train_agent(
                 p_loss = -torch.min(s1, s2).mean()
                 v_loss = nn.functional.mse_loss(new_v, b_returns)
                 loss = p_loss + value_coeff * v_loss - entropy_coeff * ent.mean()
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 optimizer.step()

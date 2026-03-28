@@ -117,11 +117,13 @@ class SharedHWNODE(nn.Module):
 
         # Cache exp(A Δt) during eval for speed.
         self.register_buffer("_cached_flow", None, persistent=False)
+        self.register_buffer("_cached_readout_weight", None, persistent=False)
 
     def train(self, mode: bool = True):
         super().train(mode)
         if mode:
             self._cached_flow = None
+            self._cached_readout_weight = None
         return self
 
     def _hammerstein_nonlinearity(self, x: Tensor) -> Tensor:
@@ -184,11 +186,22 @@ class SharedHWNODE(nn.Module):
 
         return flow
 
-    def _one_shared_hwnode_step(self, h: Tensor, flow: Tensor) -> Tensor:
+    def _readout_weight(self, flow: Tensor, device: torch.device, dtype: torch.dtype) -> Tensor:
+        """Fuse the latent flow and output projection into one linear map."""
+        use_cache = not self.training and not torch.is_grad_enabled()
+        if use_cache and self._cached_readout_weight is not None:
+            return self._cached_readout_weight
+
+        readout_weight = (self.W_out.weight @ flow).to(device=device, dtype=dtype)
+        if use_cache:
+            self._cached_readout_weight = readout_weight
+        return readout_weight
+
+    def _one_shared_hwnode_step(self, h: Tensor, readout_weight: Tensor) -> Tensor:
         r"""Apply ONE shared HWNODE step."""
         z0 = self._hammerstein_nonlinearity(self.W_in(h))
-        zt = z0 @ flow.T
-        y = self.W_out(zt)
+        # Fuse z0 @ flow.T followed by W_out into one linear transform.
+        y = F.linear(z0, readout_weight)
         y = self._wiener_nonlinearity(y)
         return y
 
@@ -198,9 +211,10 @@ class SharedHWNODE(nn.Module):
         """
         h = x
         flow = self._flow_matrix(device=x.device, dtype=x.dtype)
+        readout_weight = self._readout_weight(flow, device=x.device, dtype=x.dtype)
 
         for _ in range(self.num_virtual_layers):
-            update = self._one_shared_hwnode_step(h, flow)
+            update = self._one_shared_hwnode_step(h, readout_weight)
             if self.residual:
                 h = h + update
             else:
