@@ -1,15 +1,14 @@
-"""Compare HW-NODE variants against MLP at matched parameter budget on Pendulum-v1.
+"""Compare HW-NODE variants against MLP at matched hdim on Pendulum-v1.
 
-Fixed: ~9k params, 180s wall clock per run, 5 seeds.
+All configs use hdim=32. HW-NODE naturally has ~half the params due to
+weight sharing. Tests whether the inductive bias compensates.
 
 Usage:
     PYTHONPATH=. python experiments/pendulum_comparison.py --no-wandb
-    PYTHONPATH=. python experiments/pendulum_comparison.py --max-seconds 300 --num-seeds 10 --no-wandb
 """
 
 import argparse
 import numpy as np
-import torch
 import gymnasium as gym
 
 from hwnode.model import HWNodeNetwork
@@ -18,7 +17,7 @@ from experiments.taylor_vs_chebyshev import FlexActorCritic, train_agent
 
 
 def main():
-    parser = argparse.ArgumentParser(description="HW-NODE vs MLP at matched params")
+    parser = argparse.ArgumentParser(description="HW-NODE vs MLP at matched hdim")
     parser.add_argument("--env", type=str, default="Pendulum-v1")
     parser.add_argument("--max-seconds", type=int, default=180)
     parser.add_argument("--num-seeds", type=int, default=5)
@@ -33,23 +32,33 @@ def main():
     act_dim = env_tmp.action_space.shape[0] if continuous else env_tmp.action_space.n
     env_tmp.close()
 
-    # All configs designed to hit ~9k total params (actor + critic)
+    # All hdim=32. HW-NODE variants explore virtual depth × bottleneck × Taylor order.
     configs = [
         ("mlp-baseline", MLPNetwork, dict(hidden_dim=32, num_blocks=2)),
         (
-            "hwnode-shallow",
+            "hwnode-wide-shallow",
+            HWNodeNetwork,
+            dict(hidden_dim=32, state_dim=32, num_blocks=1, order=4),
+        ),
+        (
+            "hwnode-wide-deep",
+            HWNodeNetwork,
+            dict(hidden_dim=32, state_dim=32, num_blocks=6, order=4),
+        ),
+        (
+            "hwnode-mid-shallow",
             HWNodeNetwork,
             dict(hidden_dim=32, state_dim=24, num_blocks=1, order=4),
         ),
         (
-            "hwnode-medium",
+            "hwnode-mid-deep",
             HWNodeNetwork,
-            dict(hidden_dim=30, state_dim=22, num_blocks=3, order=4),
+            dict(hidden_dim=32, state_dim=24, num_blocks=6, order=4),
         ),
         (
-            "hwnode-deep",
+            "hwnode-tight-deep",
             HWNodeNetwork,
-            dict(hidden_dim=28, state_dim=20, num_blocks=5, order=4),
+            dict(hidden_dim=32, state_dim=16, num_blocks=8, order=4),
         ),
         (
             "hwnode-high-order",
@@ -59,7 +68,10 @@ def main():
     ]
 
     # Verify param counts
-    print(f"\nConfig verification:")
+    print(
+        f"\n{'Config':>22} | {'Params':>8} | {'sdim':>4} | {'depth':>5} | {'order':>5}"
+    )
+    print("-" * 55)
     for name, Backbone, kwargs in configs:
         model = FlexActorCritic(
             obs_dim=obs_dim,
@@ -69,17 +81,30 @@ def main():
             **kwargs,
         )
         p = sum(x.numel() for x in model.parameters() if x.requires_grad)
-        print(f"  {name:>22}  {p:>6,} params  {kwargs}")
+        print(
+            f"{name:>22} | {p:>8,} | {kwargs.get('state_dim', '—'):>4} | "
+            f"{kwargs['num_blocks']:>5} | {kwargs.get('order', '—'):>5}"
+        )
 
     print(f"\n{'=' * 60}")
-    print(f" Pendulum-v1 comparison")
-    print(f" Budget: {args.max_seconds}s wall clock | Seeds: {args.num_seeds}")
+    print(f" Pendulum-v1 | Budget: {args.max_seconds}s | Seeds: {args.num_seeds}")
     print(f"{'=' * 60}\n")
 
     all_results = []
 
     for name, Backbone, kwargs in configs:
         rewards = []
+        # Compute params once (same for all seeds)
+        _ref = FlexActorCritic(
+            obs_dim=obs_dim,
+            act_dim=act_dim,
+            BackboneClass=Backbone,
+            continuous=continuous,
+            **kwargs,
+        )
+        params = sum(x.numel() for x in _ref.parameters() if x.requires_grad)
+        del _ref
+
         for seed in range(args.num_seeds):
             model = FlexActorCritic(
                 obs_dim=obs_dim,
@@ -88,7 +113,6 @@ def main():
                 continuous=continuous,
                 **kwargs,
             )
-
             res = train_agent(
                 env_id=env_id,
                 model=model,
@@ -99,21 +123,22 @@ def main():
                 label=f"{name}-s{seed}",
             )
             rewards.append(res["final_mean_reward"])
-
-        params = sum(x.numel() for x in model.parameters() if x.requires_grad)
         mu, sd = np.mean(rewards), np.std(rewards)
         all_results.append({"name": name, "params": params, "mean": mu, "std": sd})
-        print(f"  {name:>22}  {params:>6,}  {mu:>7.1f} ± {sd:<5.1f}")
+        print(f"  {name:>22}  {params:>6,} params  {mu:>7.1f} ± {sd:<5.1f}")
 
     # Summary
     print(f"\n{'=' * 60}")
-    print(f" RESULTS")
+    print(f" RESULTS (sorted by reward)")
     print(f"{'=' * 60}")
-    print(f"{'Config':>22} | {'Params':>8} | {'Reward':>14}")
-    print("-" * 52)
-    for r in all_results:
+    print(f"{'Config':>22} | {'Params':>8} | {'vs MLP':>8} | {'Reward':>14}")
+    print("-" * 60)
+    mlp_reward = next(r["mean"] for r in all_results if r["name"] == "mlp-baseline")
+    for r in sorted(all_results, key=lambda x: x["mean"], reverse=True):
+        delta = r["mean"] - mlp_reward
+        sign = "+" if delta >= 0 else ""
         print(
-            f"{r['name']:>22} | {r['params']:>8,} | {r['mean']:>7.1f} ± {r['std']:<5.1f}"
+            f"{r['name']:>22} | {r['params']:>8,} | {sign}{delta:>6.1f} | {r['mean']:>7.1f} ± {r['std']:<5.1f}"
         )
 
 
