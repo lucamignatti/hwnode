@@ -1,7 +1,8 @@
-"""Find the MLP param budget yielding ~50% Pendulum reward.
+"""Find a stable MLP baseline at HW-NODE-matching param counts.
 
-Sweeps a coarse grid of hdim with 3 seeds each, then reports
-the budget where mean reward crosses the halfway threshold.
+For hdim=state_dim=d with num_blocks=2, MLP and HW-NODE have the same
+param count. This sweeps those matching dims with enough seeds to find
+a stable config.
 
 Usage:
     PYTHONPATH=. python experiments/mlp_param_sweep.py --no-wandb
@@ -16,16 +17,15 @@ from experiments.taylor_vs_chebyshev import FlexActorCritic, train_agent
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Coarse MLP param budget sweep")
+    parser = argparse.ArgumentParser(description="MLP baseline at matching dims")
     parser.add_argument("--env", type=str, default="Pendulum-v1")
     parser.add_argument("--max-seconds", type=int, default=180)
     parser.add_argument("--num-blocks", type=int, default=2)
-    parser.add_argument("--num-seeds", type=int, default=3)
+    parser.add_argument("--num-seeds", type=int, default=5)
     parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()
 
     env_id = args.env
-    target_reward = -800.0  # Pendulum episode range [-1600, 0]; halfway ≈ -800
 
     env_tmp = gym.make(env_id)
     obs_dim = env_tmp.observation_space.shape[0]
@@ -33,13 +33,14 @@ def main():
     act_dim = env_tmp.action_space.shape[0] if continuous else env_tmp.action_space.n
     env_tmp.close()
 
-    # Coarse grid — fill in between hdim=23 (too low) and hdim=35 (at target)
-    hdim_grid = [20, 24, 28, 32, 36]
+    # hdim = state_dim = d values where MLP and HW-NODE match params.
+    # Formula: MLP = 14d² + 20d + 2, HW-NODE = 12d² + 14d + 6
+    # Also include d=32 (MLP reference from earlier stable run).
+    hdim_grid = [16, 18, 20, 22, 24, 32]
 
-    print(f"\nCoarse sweep on {env_id}")
+    print(f"\nMatching-dim sweep on {env_id}")
     print(f"hdim grid: {hdim_grid} | num_blocks={args.num_blocks}")
-    print(f"Seeds: {args.num_seeds} | Budget: {args.max_seconds}s/run")
-    print(f"Target reward: {target_reward}\n")
+    print(f"Seeds: {args.num_seeds} | Budget: {args.max_seconds}s/run\n")
 
     results = {}
 
@@ -64,43 +65,38 @@ def main():
                 total_timesteps=10_000_000,
                 max_wallclock_seconds=args.max_seconds,
                 wandb_run=None,
-                label=f"mlp-h{hdim}-s{seed}",
+                label=f"mlp-d{hdim}-s{seed}",
             )
             rewards.append(res["final_mean_reward"])
 
         mu = np.mean(rewards)
         sd = np.std(rewards)
         results[hdim] = {"params": params, "mean": mu, "std": sd}
-        marker = " <<<" if mu >= target_reward else ""
-        print(
-            f"  hdim={hdim:>3}  params={params:>6,}  reward={mu:>7.1f} ± {sd:<5.1f}{marker}"
-        )
+        print(f"  d={hdim:>3}  params={params:>6,}  reward={mu:>7.1f} ± {sd:<5.1f}")
 
     # Summary
-    print(f"\n{'=' * 55}")
+    print(f"\n{'=' * 60}")
     print(f" RESULTS")
-    print(f"{'=' * 55}")
-    for hdim, r in results.items():
-        marker = " <<<" if r["mean"] >= target_reward else ""
+    print(f"{'=' * 60}")
+    print(f"{'d':>4} | {'Params':>8} | {'Reward':>14} | {'Stable':>6}")
+    print("-" * 42)
+    for hdim in sorted(results):
+        r = results[hdim]
+        stable = "yes" if r["std"] < 100 else "no"
         print(
-            f"  hdim={hdim:>3}  params={r['params']:>6,}  {r['mean']:>7.1f} ± {r['std']:<5.1f}{marker}"
+            f"{hdim:>4} | {r['params']:>8,} | {r['mean']:>7.1f} ± {r['std']:<5.1f} | {stable:>6}"
         )
 
-    # Find threshold
-    threshold = None
-    for hdim in sorted(results):
-        if results[hdim]["mean"] >= target_reward:
-            threshold = hdim
-            break
-
-    print()
-    if threshold:
-        r = results[threshold]
+    # Recommend the best stable config
+    stable = [(h, r) for h, r in results.items() if r["std"] < 100]
+    if stable:
+        best = max(stable, key=lambda x: x[1]["mean"])
         print(
-            f"Target budget: ~{r['params']:,} params (hdim={threshold}, reward={r['mean']:.1f})"
+            f"\nBest stable config: d={best[0]}, params={best[1]['params']:,}, "
+            f"reward={best[1]['mean']:.1f} ± {best[1]['std']:.1f}"
         )
     else:
-        print("Threshold not reached. Increase hdim range.")
+        print("\nNo stable configs found (all std > 100).")
 
 
 if __name__ == "__main__":

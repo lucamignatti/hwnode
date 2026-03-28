@@ -47,9 +47,9 @@ def main():
                     f"hwnode-v{vdepth}-o{order}",
                     HWNodeNetwork,
                     dict(
-                        hidden_dim=HDIM,
+                        hidden_dim=63,
                         state_dim=SDIM,
-                        num_blocks=3,
+                        num_blocks=2,
                         order=order,
                         virtual_depth=vdepth,
                     ),
