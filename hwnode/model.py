@@ -208,6 +208,13 @@ class SharedHWNODE(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         r"""
         Unroll the SAME HWNODE step across virtual depth.
+
+        When ``residual=False`` this matches the original mathematical intent:
+            h_{l+1} = psi(W_out exp(A dt) phi(W_in h_l))
+
+        so each virtual layer behaves like a standard feed-forward layer
+        followed by its nonlinearity, with the latent ODE operator replacing
+        the usual affine map.
         """
         h = x
         flow = self._flow_matrix(device=x.device, dtype=x.dtype)
@@ -230,9 +237,9 @@ HWNodeBlock = SharedHWNODE
 class HWNodeNetwork(nn.Module):
     """Network wrapper: embed → SharedHWNODE × num_blocks → LayerNorm.
 
-    Each SharedHWNODE block already applies its own residual recurrence across
-    `virtual_depth` internal steps, so the wrapper should compose blocks
-    directly rather than adding an extra outer residual connection.
+    Each SharedHWNODE block composes `virtual_depth` feed-forward HW-NODE
+    transformations internally. The wrapper then composes physical blocks
+    directly, mirroring a standard stacked MLP depth semantics.
     """
 
     def __init__(
@@ -255,7 +262,7 @@ class HWNodeNetwork(nn.Module):
                     num_virtual_layers=virtual_depth,
                     taylor_order=order,
                     square_output=(activation == "relu_squared"),
-                    residual=True,
+                    residual=False,
                 )
                 for _ in range(num_blocks)
             ]
