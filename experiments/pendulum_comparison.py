@@ -33,11 +33,17 @@ def main():
     act_dim = env_tmp.action_space.shape[0] if continuous else env_tmp.action_space.n
     env_tmp.close()
 
-    HDIM = 32
-    SDIM = 32
+    # Based on param_check.py: MLP hdim=32, num_blocks=2 = 9,155 params
+    # HW-NODE hdim=22, state_dim=22, num_blocks=3 = 9,029 params (closest match)
+    HDIM_MLP = 32
+    NUM_BLOCKS_MLP = 2
+
+    HDIM_HWNODE = 22
+    SDIM_HWNODE = 22
+    NUM_BLOCKS_HWNODE = 3
 
     configs = [
-        ("mlp", MLPNetwork, dict(hidden_dim=HDIM, num_blocks=2)),
+        ("mlp", MLPNetwork, dict(hidden_dim=HDIM_MLP, num_blocks=NUM_BLOCKS_MLP)),
     ]
 
     for vdepth in [2, 4, 6, 12]:
@@ -47,9 +53,9 @@ def main():
                     f"hwnode-v{vdepth}-o{order}",
                     HWNodeNetwork,
                     dict(
-                        hidden_dim=HDIM,
-                        state_dim=SDIM,
-                        num_blocks=3,
+                        hidden_dim=HDIM_HWNODE,
+                        state_dim=SDIM_HWNODE,
+                        num_blocks=NUM_BLOCKS_HWNODE,
                         order=order,
                         virtual_depth=vdepth,
                     ),
