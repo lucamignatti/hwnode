@@ -1,7 +1,7 @@
 """1:1 comparison: HW-NODE vs MLP on Pendulum-v1.
 
-Same hdim, same state_dim, same num_blocks. HW-NODE uses weight sharing
-across virtual layers so it has fewer params — that's the point.
+Fixed external config (hdim=32, state_dim=32, num_blocks=2). HW-NODE
+variants change only internal hyperparams (order, virtual depth).
 
 Usage:
     PYTHONPATH=. python experiments/pendulum_comparison.py --no-wandb
@@ -33,26 +33,31 @@ def main():
     env_tmp.close()
 
     HDIM = 32
-    SDIM = 32  # same as hdim for 1:1 fair comparison
+    SDIM = 32
+    BLOCKS = 2
 
-    # num_blocks = virtual depth for HW-NODE, physical layers for MLP.
-    depths = [1, 2, 4, 8]
+    # MLP baseline: fixed config
+    configs = [
+        ("mlp", MLPNetwork, dict(hidden_dim=HDIM, num_blocks=BLOCKS)),
+    ]
 
-    configs = []
-    for d in depths:
-        configs.append((f"mlp-d{d}", MLPNetwork, dict(hidden_dim=HDIM, num_blocks=d)))
-        configs.append(
-            (
-                f"hwnode-d{d}",
-                HWNodeNetwork,
-                dict(hidden_dim=HDIM, state_dim=SDIM, num_blocks=d, order=4),
+    # HW-NODE variants: same external config, vary internal order and virtual depth
+    for vdepth in [1, 2, 4, 8]:
+        for order in [2, 4, 8]:
+            configs.append(
+                (
+                    f"hwnode-v{vdepth}-o{order}",
+                    HWNodeNetwork,
+                    dict(
+                        hidden_dim=HDIM, state_dim=SDIM, num_blocks=vdepth, order=order
+                    ),
+                )
             )
-        )
 
     # Verify param counts
-    print(f"\nhdim={HDIM}, state_dim={SDIM}")
-    print(f"\n{'Config':>18} | {'Params':>8} | {'depth':>5}")
-    print("-" * 40)
+    print(f"\nhdim={HDIM}, state_dim={SDIM}, num_blocks={BLOCKS}")
+    print(f"\n{'Config':>20} | {'Params':>8}")
+    print("-" * 35)
     for name, Backbone, kwargs in configs:
         model = FlexActorCritic(
             obs_dim=obs_dim,
@@ -62,7 +67,7 @@ def main():
             **kwargs,
         )
         p = sum(x.numel() for x in model.parameters() if x.requires_grad)
-        print(f"{name:>18} | {p:>8,} | {kwargs['num_blocks']:>5}")
+        print(f"{name:>20} | {p:>8,}")
 
     print(f"\n{'=' * 60}")
     print(f" Pendulum-v1 | Budget: {args.max_seconds}s | Seeds: {args.num_seeds}")
@@ -93,32 +98,25 @@ def main():
 
         params = sum(x.numel() for x in model.parameters() if x.requires_grad)
         mu, sd = np.mean(rewards), np.std(rewards)
-        all_results.append(
-            {
-                "name": name,
-                "params": params,
-                "depth": kwargs["num_blocks"],
-                "mean": mu,
-                "std": sd,
-            }
-        )
-        print(f"  {name:>18}  {params:>6,} params  {mu:>7.1f} ± {sd:<5.1f}")
+        all_results.append({"name": name, "params": params, "mean": mu, "std": sd})
+        print(f"  {name:>20}  {params:>6,} params  {mu:>7.1f} ± {sd:<5.1f}")
 
-    # Summary grouped by depth
+    # Summary
+    mlp_r = next(r for r in all_results if r["name"] == "mlp")
     print(f"\n{'=' * 60}")
     print(f" RESULTS")
     print(f"{'=' * 60}")
-    for d in depths:
-        mlp = next(r for r in all_results if r["name"] == f"mlp-d{d}")
-        hw = next(r for r in all_results if r["name"] == f"hwnode-d{d}")
-        delta = hw["mean"] - mlp["mean"]
+    print(
+        f"  {'mlp':>20}  {mlp_r['params']:>6,} params  {mlp_r['mean']:>7.1f} ± {mlp_r['std']:<5.1f}"
+    )
+    print(f"{'-' * 60}")
+    for r in sorted(all_results, key=lambda x: x["mean"], reverse=True):
+        if r["name"] == "mlp":
+            continue
+        delta = r["mean"] - mlp_r["mean"]
         sign = "+" if delta >= 0 else ""
-        print(f"\n  depth={d}:")
         print(
-            f"    mlp:    {mlp['params']:>6,} params  {mlp['mean']:>7.1f} ± {mlp['std']:<5.1f}"
-        )
-        print(
-            f"    hwnode: {hw['params']:>6,} params  {hw['mean']:>7.1f} ± {hw['std']:<5.1f}  ({sign}{delta:.1f} vs MLP)"
+            f"  {r['name']:>20}  {r['params']:>6,} params  {r['mean']:>7.1f} ± {r['std']:<5.1f}  ({sign}{delta:.1f})"
         )
 
 
