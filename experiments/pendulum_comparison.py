@@ -40,8 +40,8 @@ def main():
         ("mlp", MLPNetwork, dict(hidden_dim=HDIM, num_blocks=2)),
     ]
 
-    for vdepth in [1, 2, 4, 8]:
-        for order in [2, 4, 8]:
+    for vdepth in [2, 4, 6, 12]:
+        for order in [2, 3]:
             configs.append(
                 (
                     f"hwnode-v{vdepth}-o{order}",
