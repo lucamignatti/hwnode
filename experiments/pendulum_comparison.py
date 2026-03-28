@@ -20,7 +20,7 @@ from experiments.taylor_vs_chebyshev import FlexActorCritic, train_agent
 def main():
     parser = argparse.ArgumentParser(description="HW-NODE vs MLP 1:1 comparison")
     parser.add_argument("--env", type=str, default="Pendulum-v1")
-    parser.add_argument("--max-seconds", type=int, default=180)
+    parser.add_argument("--max-seconds", type=int, default=600)
     parser.add_argument("--num-seeds", type=int, default=5)
     parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()

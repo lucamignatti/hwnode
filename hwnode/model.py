@@ -214,9 +214,11 @@ HWNodeBlock = SharedHWNODE
 
 
 class HWNodeNetwork(nn.Module):
-    """Network wrapper: embed → [SharedHWNODE + residual] × num_blocks → LayerNorm.
+    """Network wrapper: embed → SharedHWNODE × num_blocks → LayerNorm.
 
-    Each block has its own parameters and runs for `virtual_depth` steps internally.
+    Each SharedHWNODE block already applies its own residual recurrence across
+    `virtual_depth` internal steps, so the wrapper should compose blocks
+    directly rather than adding an extra outer residual connection.
     """
 
     def __init__(
@@ -250,6 +252,6 @@ class HWNodeNetwork(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.embed(x)
         for block in self.blocks:
-            h = h + block(h)
+            h = block(h)
         h = self.norm_out(h)
         return h
