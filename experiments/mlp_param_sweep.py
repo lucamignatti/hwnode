@@ -1,8 +1,7 @@
 """Find a stable MLP baseline at HW-NODE-matching param counts.
 
-For hdim=state_dim=d with num_blocks=2, MLP and HW-NODE have the same
-param count. This sweeps those matching dims with enough seeds to find
-a stable config.
+3 seeds per config. Early stopping: skip 3rd seed if first 2 have huge
+variance. Stop searching if a config is stable and above -800.
 
 Usage:
     PYTHONPATH=. python experiments/mlp_param_sweep.py --no-wandb
@@ -21,11 +20,12 @@ def main():
     parser.add_argument("--env", type=str, default="Pendulum-v1")
     parser.add_argument("--max-seconds", type=int, default=180)
     parser.add_argument("--num-blocks", type=int, default=2)
-    parser.add_argument("--num-seeds", type=int, default=5)
+    parser.add_argument("--max-seeds", type=int, default=3)
     parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()
 
     env_id = args.env
+    HALF_WAY = -800.0
 
     env_tmp = gym.make(env_id)
     obs_dim = env_tmp.observation_space.shape[0]
@@ -33,21 +33,21 @@ def main():
     act_dim = env_tmp.action_space.shape[0] if continuous else env_tmp.action_space.n
     env_tmp.close()
 
-    # hdim = state_dim = d values where MLP and HW-NODE match params.
-    # Formula: MLP = 14d² + 20d + 2, HW-NODE = 12d² + 14d + 6
-    # Also include d=32 (MLP reference from earlier stable run).
+    # Matching dims where MLP and HW-NODE have equal params (hdim=state_dim=d, 2 blocks).
     hdim_grid = [16, 18, 20, 22, 24, 32]
 
     print(f"\nMatching-dim sweep on {env_id}")
-    print(f"hdim grid: {hdim_grid} | num_blocks={args.num_blocks}")
-    print(f"Seeds: {args.num_seeds} | Budget: {args.max_seconds}s/run\n")
+    print(
+        f"hdim grid: {hdim_grid} | max seeds: {args.max_seeds} | budget: {args.max_seconds}s/run"
+    )
+    print(f"Stable = std < 100 | Early stop if stable + reward > {HALF_WAY}\n")
 
     results = {}
 
     for hdim in hdim_grid:
         rewards = []
         params = 0
-        for seed in range(args.num_seeds):
+        for seed in range(args.max_seeds):
             model = FlexActorCritic(
                 obs_dim=obs_dim,
                 act_dim=act_dim,
@@ -69,34 +69,46 @@ def main():
             )
             rewards.append(res["final_mean_reward"])
 
+            # After 2 seeds: check if variance is hopeless
+            if len(rewards) == 2 and abs(rewards[0] - rewards[1]) > 500:
+                print(
+                    f"  d={hdim:>3} s{seed}: {rewards[-1]:>7.1f}  (high variance, skipping seed 3)"
+                )
+                break
+
         mu = np.mean(rewards)
         sd = np.std(rewards)
-        results[hdim] = {"params": params, "mean": mu, "std": sd}
-        print(f"  d={hdim:>3}  params={params:>6,}  reward={mu:>7.1f} ± {sd:<5.1f}")
+        stable = sd < 100
+        results[hdim] = {"params": params, "mean": mu, "std": sd, "seeds": len(rewards)}
+        tag = "stable" if stable else "unstable"
+        print(
+            f"  d={hdim:>3}  params={params:>6,}  {mu:>7.1f} ± {sd:<5.1f}  [{tag}, {len(rewards)} seeds]"
+        )
+
+        # Early stop: found a stable config above halfway
+        if stable and mu >= HALF_WAY:
+            print(f"\n  Found stable winner at d={hdim}. Stopping sweep.")
+            break
 
     # Summary
     print(f"\n{'=' * 60}")
     print(f" RESULTS")
     print(f"{'=' * 60}")
-    print(f"{'d':>4} | {'Params':>8} | {'Reward':>14} | {'Stable':>6}")
-    print("-" * 42)
     for hdim in sorted(results):
         r = results[hdim]
-        stable = "yes" if r["std"] < 100 else "no"
+        tag = "yes" if r["std"] < 100 else "no"
         print(
-            f"{hdim:>4} | {r['params']:>8,} | {r['mean']:>7.1f} ± {r['std']:<5.1f} | {stable:>6}"
+            f"  d={hdim:>3}  {r['params']:>6,} params  {r['mean']:>7.1f} ± {r['std']:<5.1f}  stable={tag}"
         )
 
-    # Recommend the best stable config
     stable = [(h, r) for h, r in results.items() if r["std"] < 100]
     if stable:
         best = max(stable, key=lambda x: x[1]["mean"])
         print(
-            f"\nBest stable config: d={best[0]}, params={best[1]['params']:,}, "
-            f"reward={best[1]['mean']:.1f} ± {best[1]['std']:.1f}"
+            f"\nBest: d={best[0]}, {best[1]['params']:,} params, {best[1]['mean']:.1f} ± {best[1]['std']:.1f}"
         )
     else:
-        print("\nNo stable configs found (all std > 100).")
+        print("\nNo stable configs found.")
 
 
 if __name__ == "__main__":
