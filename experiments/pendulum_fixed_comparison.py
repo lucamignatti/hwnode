@@ -81,6 +81,12 @@ def main():
     parser.add_argument("--max-seconds", type=int, default=600)
     parser.add_argument("--num-seeds", type=int, default=5)
     parser.add_argument("--json-out", type=str, default="")
+    parser.add_argument(
+        "--configs",
+        nargs="+",
+        default=[],
+        help="Optional list of config names to run",
+    )
     parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()
 
@@ -93,6 +99,14 @@ def main():
     env_tmp.close()
 
     configs = _build_configs()
+    if args.configs:
+        selected = set(args.configs)
+        configs = [cfg for cfg in configs if cfg[0] in selected]
+        missing = sorted(selected - {cfg[0] for cfg in configs})
+        if missing:
+            parser.error(f"Unknown config(s): {', '.join(missing)}")
+        if not configs:
+            parser.error("No configs selected")
 
     print(f"\n{'Config':>28} | {'Params':>8}")
     print("-" * 40)
@@ -148,22 +162,28 @@ def main():
         all_results.append({"name": name, "params": params, "mean": mu, "std": sd})
         print(f"  {name:>28}  {params:>6,} params  {mu:>7.1f} ± {sd:<5.1f}")
 
-    mlp_r = next(r for r in all_results if r["name"] == "mlp")
     print(f"\n{'=' * 60}")
     print(" RESULTS")
     print(f"{'=' * 60}")
-    print(
-        f"  {'mlp':>28}  {mlp_r['params']:>6,} params  {mlp_r['mean']:>7.1f} ± {mlp_r['std']:<5.1f}"
-    )
-    print(f"{'-' * 60}")
-    for r in sorted(all_results, key=lambda x: x["mean"], reverse=True):
-        if r["name"] == "mlp":
-            continue
-        delta = r["mean"] - mlp_r["mean"]
-        sign = "+" if delta >= 0 else ""
+    mlp_r = next((r for r in all_results if r["name"] == "mlp"), None)
+    if mlp_r is not None:
         print(
-            f"  {r['name']:>28}  {r['params']:>6,} params  {r['mean']:>7.1f} ± {r['std']:<5.1f}  ({sign}{delta:.1f})"
+            f"  {'mlp':>28}  {mlp_r['params']:>6,} params  {mlp_r['mean']:>7.1f} ± {mlp_r['std']:<5.1f}"
         )
+        print(f"{'-' * 60}")
+        for r in sorted(all_results, key=lambda x: x["mean"], reverse=True):
+            if r["name"] == "mlp":
+                continue
+            delta = r["mean"] - mlp_r["mean"]
+            sign = "+" if delta >= 0 else ""
+            print(
+                f"  {r['name']:>28}  {r['params']:>6,} params  {r['mean']:>7.1f} ± {r['std']:<5.1f}  ({sign}{delta:.1f})"
+            )
+    else:
+        for r in sorted(all_results, key=lambda x: x["mean"], reverse=True):
+            print(
+                f"  {r['name']:>28}  {r['params']:>6,} params  {r['mean']:>7.1f} ± {r['std']:<5.1f}"
+            )
 
     if args.json_out:
         payload = {
