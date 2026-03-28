@@ -25,7 +25,7 @@ def main():
     args = parser.parse_args()
 
     env_id = args.env
-    target_reward = -8.1  # Pendulum: [-16.27, 0], 50% ≈ -8.1
+    target_reward = -800.0  # Pendulum episode range [-1600, 0]; halfway ≈ -800
 
     env_tmp = gym.make(env_id)
     obs_dim = env_tmp.observation_space.shape[0]
