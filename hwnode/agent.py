@@ -21,6 +21,7 @@ from hwnode.config import ModelConfig
 # Actor-Critic network
 # ---------------------------------------------------------------------------
 
+
 class ActorCritic(nn.Module):
     """Separate actor (policy) and critic (value) networks.
 
@@ -42,11 +43,24 @@ class ActorCritic(nn.Module):
             num_blocks=cfg.num_blocks,
         )
         if cfg.backbone == "hwnode":
-            backbone_kwargs.update(
-                state_dim=cfg.state_dim,
-                order=cfg.order,
-                activation=cfg.activation,
-            )
+            if cfg.virtual_depth > 0:
+                # New semantics: num_blocks = physical, virtual_depth = internal
+                backbone_kwargs.update(
+                    state_dim=cfg.state_dim,
+                    order=cfg.order,
+                    activation=cfg.activation,
+                    num_blocks=cfg.num_blocks,
+                    virtual_depth=cfg.virtual_depth,
+                )
+            else:
+                # Backwards compat: 1 physical block, num_blocks as virtual depth
+                backbone_kwargs.update(
+                    state_dim=cfg.state_dim,
+                    order=cfg.order,
+                    activation=cfg.activation,
+                    num_blocks=1,
+                    virtual_depth=cfg.num_blocks,
+                )
 
         self.actor_backbone = Backbone(**backbone_kwargs)
         self.critic_backbone = Backbone(**backbone_kwargs)
@@ -109,6 +123,7 @@ class ActorCritic(nn.Module):
 # ---------------------------------------------------------------------------
 # Rollout buffer
 # ---------------------------------------------------------------------------
+
 
 class RolloutBuffer:
     """Fixed-size buffer for PPO rollouts with GAE computation.
@@ -188,9 +203,7 @@ class RolloutBuffer:
 
         self.returns = self.advantages + self.values
 
-    def get_batches(
-        self, batch_size: int
-    ):
+    def get_batches(self, batch_size: int):
         """Yield random minibatches of indices."""
         indices = np.random.permutation(self.rollout_steps)
         for start in range(0, self.rollout_steps, batch_size):

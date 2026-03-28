@@ -19,8 +19,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+
 def _relu_squared(x: torch.Tensor) -> torch.Tensor:
     return torch.relu(x).clamp(min=0, max=1e4).square()
+
 
 _ACTIVATIONS: dict[str, callable] = {
     "relu_squared": _relu_squared,
@@ -29,10 +31,11 @@ _ACTIVATIONS: dict[str, callable] = {
     "silu": nn.functional.silu,
 }
 
+
 class SharedHWNODE(nn.Module):
     r"""
     Weight-shared Hammerstein-Wiener Neural ODE.
-    
+
     This module implements the mathematical idea behind HWNODE:
         h_0 = x
         z_l(0) = phi(W_in h_l)
@@ -61,24 +64,24 @@ class SharedHWNODE(nn.Module):
         if model_dim is None:
             model_dim = kwargs.get("input_dim")
         if "input_dim" in kwargs and model_dim != kwargs["input_dim"]:
-             model_dim = kwargs["input_dim"]
+            model_dim = kwargs["input_dim"]
         if "order" in kwargs:
-             taylor_order = kwargs["order"]
+            taylor_order = kwargs["order"]
         if "activation" in kwargs:
-             square_output = (kwargs["activation"] == "relu_squared")
+            square_output = kwargs["activation"] == "relu_squared"
 
         # positional fallback for legacy initializers like super().__init__(input_dim, state_dim, order, activation)
         if len(args) >= 1:
-             taylor_order = args[0]
+            taylor_order = args[0]
         if len(args) >= 2:
-             square_output = (args[1] == "relu_squared")
+            square_output = args[1] == "relu_squared"
 
-        if isinstance(taylor_order, str): # if arg mixup happened
-             square_output = (taylor_order == "relu_squared")
-             taylor_order = kwargs.get("order", 2)
+        if isinstance(taylor_order, str):  # if arg mixup happened
+            square_output = taylor_order == "relu_squared"
+            taylor_order = kwargs.get("order", 2)
         if isinstance(num_virtual_layers, str):
-             num_virtual_layers = 2
-             
+            num_virtual_layers = 2
+
         self.model_dim = model_dim
         self.state_dim = state_dim
         self.num_virtual_layers = num_virtual_layers
@@ -105,8 +108,12 @@ class SharedHWNODE(nn.Module):
         self.W_out = nn.Linear(state_dim, model_dim, bias=False)
 
         # Buffers for one-step power iteration used in spectral normalization.
-        self.register_buffer("_power_u", F.normalize(torch.randn(state_dim), dim=0), persistent=False)
-        self.register_buffer("_power_v", F.normalize(torch.randn(state_dim), dim=0), persistent=False)
+        self.register_buffer(
+            "_power_u", F.normalize(torch.randn(state_dim), dim=0), persistent=False
+        )
+        self.register_buffer(
+            "_power_v", F.normalize(torch.randn(state_dim), dim=0), persistent=False
+        )
 
         # Cache exp(A Δt) during eval for speed.
         self.register_buffer("_cached_flow", None, persistent=False)
@@ -125,7 +132,7 @@ class SharedHWNODE(nn.Module):
         """Output-side nonlinearity psi."""
         y = F.leaky_relu(x, negative_slope=self.negative_slope)
         if self.square_output:
-            # Safely clamp before squaring to prevent fp32 NaN explosion 
+            # Safely clamp before squaring to prevent fp32 NaN explosion
             # across deep virtual residual recurrence (e.g. at dimension 512, order 8)
             y = y.clamp(min=-1e4, max=1e4).square()
         return y
@@ -169,7 +176,7 @@ class SharedHWNODE(nn.Module):
 
         A_hat = self._spectrally_normalized_A()
         M = (A_hat * self.dt).to(device=device, dtype=dtype)
-        
+
         flow = self._matrix_exp_approx(M)
 
         if use_cache:
@@ -207,7 +214,10 @@ HWNodeBlock = SharedHWNODE
 
 
 class HWNodeNetwork(nn.Module):
-    """Network wrapper mapping RL configuration to SharedHWNODE."""
+    """Network wrapper: embed → [SharedHWNODE + residual] × num_blocks → LayerNorm.
+
+    Each block has its own parameters and runs for `virtual_depth` steps internally.
+    """
 
     def __init__(
         self,
@@ -217,25 +227,29 @@ class HWNodeNetwork(nn.Module):
         num_blocks: int = 2,
         order: int = 4,
         activation: str = "relu_squared",
+        virtual_depth: int = 1,
     ) -> None:
         super().__init__()
         self.embed = nn.Linear(obs_dim, hidden_dim)
-        
-        # Directly leverage the single shared node with virtual depth matching `num_blocks`
-        self.shared_node = SharedHWNODE(
-            model_dim=hidden_dim,
-            state_dim=state_dim,
-            num_virtual_layers=num_blocks,
-            taylor_order=order,
-            square_output=(activation == "relu_squared"),
-            residual=True
+        self.blocks = nn.ModuleList(
+            [
+                SharedHWNODE(
+                    model_dim=hidden_dim,
+                    state_dim=state_dim,
+                    num_virtual_layers=virtual_depth,
+                    taylor_order=order,
+                    square_output=(activation == "relu_squared"),
+                    residual=True,
+                )
+                for _ in range(num_blocks)
+            ]
         )
-        
         self.norm_out = nn.LayerNorm(hidden_dim)
         self.output_dim = hidden_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.embed(x)
-        h = self.shared_node(h)
+        for block in self.blocks:
+            h = h + block(h)
         h = self.norm_out(h)
         return h

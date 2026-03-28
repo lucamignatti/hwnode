@@ -15,8 +15,14 @@ def parse_args() -> argparse.Namespace:
     )
 
     # Mode
-    p.add_argument("--sweep", action="store_true", help="Run original experiment matrix")
-    p.add_argument("--sweep-v2", action="store_true", help="Run v2: tiny params + continuous control")
+    p.add_argument(
+        "--sweep", action="store_true", help="Run original experiment matrix"
+    )
+    p.add_argument(
+        "--sweep-v2",
+        action="store_true",
+        help="Run v2: tiny params + continuous control",
+    )
 
     # Environment
     p.add_argument("--env", type=str, default="CartPole-v1")
@@ -26,6 +32,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--hidden-dim", type=int, default=64)
     p.add_argument("--state-dim", type=int, default=16)
     p.add_argument("--num-blocks", type=int, default=2)
+    p.add_argument(
+        "--virtual-depth",
+        type=int,
+        default=-1,
+        help="Virtual steps per block (-1 = match num_blocks)",
+    )
     p.add_argument("--order", type=int, default=4)
     p.add_argument("--activation", type=str, default="relu_squared")
 
@@ -49,6 +61,7 @@ def parse_args() -> argparse.Namespace:
 def _resolve_device(requested: str) -> str:
     if requested == "auto":
         import torch
+
         if torch.cuda.is_available():
             return "cuda"
         # MPS lacks aten::vdot needed by spectral_norm — default to CPU.
@@ -57,7 +70,9 @@ def _resolve_device(requested: str) -> str:
     return requested
 
 
-def build_config(args: argparse.Namespace, seed_override: int | None = None) -> ExperimentConfig:
+def build_config(
+    args: argparse.Namespace, seed_override: int | None = None
+) -> ExperimentConfig:
     """Build ExperimentConfig from CLI args."""
     return ExperimentConfig(
         env_id=args.env,
@@ -72,6 +87,7 @@ def build_config(args: argparse.Namespace, seed_override: int | None = None) -> 
             hidden_dim=args.hidden_dim,
             state_dim=args.state_dim,
             num_blocks=args.num_blocks,
+            virtual_depth=args.virtual_depth,
             order=args.order,
             activation=args.activation,
         ),
@@ -117,9 +133,9 @@ def run_single(cfg: ExperimentConfig) -> dict:
     from hwnode.train import train
 
     run_name = f"{cfg.model.backbone}-{cfg.env_id}-s{cfg.seed}"
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f" RUN: {run_name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     wandb_run = None
     if cfg.use_wandb:
@@ -130,6 +146,7 @@ def run_single(cfg: ExperimentConfig) -> dict:
     finally:
         if wandb_run:
             import wandb
+
             wandb.finish()
 
     return metrics
@@ -137,13 +154,15 @@ def run_single(cfg: ExperimentConfig) -> dict:
 
 def _print_summary(results: list[dict]) -> None:
     """Print sweep results summary."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(" SWEEP COMPLETE")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for r in results:
-        print(f"  {r['config_name']:>20} | {r['env_id']:>25} | "
-              f"seed={r['seed']} | reward={r['final_mean_reward']:>8.1f} | "
-              f"params={r['param_count']:,}")
+        print(
+            f"  {r['config_name']:>20} | {r['env_id']:>25} | "
+            f"seed={r['seed']} | reward={r['final_mean_reward']:>8.1f} | "
+            f"params={r['param_count']:,}"
+        )
 
 
 def _run_sweep_matrix(args, envs, configs) -> list[dict]:
@@ -200,10 +219,10 @@ def run_sweep_v2(args: argparse.Namespace) -> None:
     tiny_discrete_envs = ["CartPole-v1", "Acrobot-v1"]
     tiny_configs = [
         # (name, backbone, hidden_dim, state_dim, num_blocks)
-        ("hwnode-tiny",    "hwnode", 16, 4, 2),
-        ("hwnode-micro",   "hwnode", 16, 4, 1),  # single block
-        ("mlp-tiny",       "mlp",   16, 0, 2),
-        ("mlp-micro",      "mlp",    8, 0, 2),   # param-matched to hwnode-tiny
+        ("hwnode-tiny", "hwnode", 16, 4, 2),
+        ("hwnode-micro", "hwnode", 16, 4, 1),  # single block
+        ("mlp-tiny", "mlp", 16, 0, 2),
+        ("mlp-micro", "mlp", 8, 0, 2),  # param-matched to hwnode-tiny
     ]
     print("\n" + "=" * 60)
     print(" SWEEP V2 — Part A: Tiny Discrete")
@@ -215,10 +234,10 @@ def run_sweep_v2(args: argparse.Namespace) -> None:
     # MountainCarContinuous-v0: obs=2, act=1 (force), reward based on reaching goal
     continuous_envs = ["Pendulum-v1", "MountainCarContinuous-v0"]
     continuous_configs = [
-        ("hwnode-small",       "hwnode", 64, 16, 2),
-        ("hwnode-tiny",        "hwnode", 32,  8, 2),
-        ("mlp-matched-width",  "mlp",   64,  0, 2),
-        ("mlp-narrow",         "mlp",   32,  0, 2),
+        ("hwnode-small", "hwnode", 64, 16, 2),
+        ("hwnode-tiny", "hwnode", 32, 8, 2),
+        ("mlp-matched-width", "mlp", 64, 0, 2),
+        ("mlp-narrow", "mlp", 32, 0, 2),
     ]
     print("\n" + "=" * 60)
     print(" SWEEP V2 — Part B: Continuous Control")

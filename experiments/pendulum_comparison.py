@@ -1,7 +1,8 @@
 """1:1 comparison: HW-NODE vs MLP on Pendulum-v1.
 
-Fixed external config (hdim=32, state_dim=32, num_blocks=2). HW-NODE
-variants change only internal hyperparams (order, virtual depth).
+MLP: hdim=32, num_blocks=2 → ~9,155 params.
+HW-NODE: hdim=32, state_dim=32, num_blocks=3 → ~9,670 params.
+Vary virtual_depth internally for HW-NODE variants.
 
 Usage:
     PYTHONPATH=. python experiments/pendulum_comparison.py --no-wandb
@@ -34,14 +35,11 @@ def main():
 
     HDIM = 32
     SDIM = 32
-    BLOCKS = 2
 
-    # MLP baseline: fixed config
     configs = [
-        ("mlp", MLPNetwork, dict(hidden_dim=HDIM, num_blocks=BLOCKS)),
+        ("mlp", MLPNetwork, dict(hidden_dim=HDIM, num_blocks=2)),
     ]
 
-    # HW-NODE variants: same external config, vary internal order and virtual depth
     for vdepth in [1, 2, 4, 8]:
         for order in [2, 4, 8]:
             configs.append(
@@ -49,13 +47,16 @@ def main():
                     f"hwnode-v{vdepth}-o{order}",
                     HWNodeNetwork,
                     dict(
-                        hidden_dim=HDIM, state_dim=SDIM, num_blocks=vdepth, order=order
+                        hidden_dim=HDIM,
+                        state_dim=SDIM,
+                        num_blocks=3,
+                        order=order,
+                        virtual_depth=vdepth,
                     ),
                 )
             )
 
     # Verify param counts
-    print(f"\nhdim={HDIM}, state_dim={SDIM}, num_blocks={BLOCKS}")
     print(f"\n{'Config':>20} | {'Params':>8}")
     print("-" * 35)
     for name, Backbone, kwargs in configs:

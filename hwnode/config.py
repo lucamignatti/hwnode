@@ -9,12 +9,15 @@ from dataclasses import dataclass, field
 class ModelConfig:
     """HW-NODE or MLP model hyperparameters."""
 
-    backbone: str = "hwnode"          # "hwnode" or "mlp"
-    hidden_dim: int = 64             # working / hidden dimension
-    state_dim: int = 16              # ODE latent dimension (hwnode only)
-    num_blocks: int = 2              # number of HW-NODE blocks or MLP layers
-    order: int = 4                   # Taylor series order (hwnode only)
-    activation: str = "relu_squared" # pointwise nonlinearity
+    backbone: str = "hwnode"  # "hwnode" or "mlp"
+    hidden_dim: int = 64  # working / hidden dimension
+    state_dim: int = 16  # ODE latent dimension (hwnode only)
+    num_blocks: int = 1  # physical HW-NODE blocks or MLP layers
+    virtual_depth: int = (
+        -1
+    )  # virtual steps per block (-1 = match num_blocks for compat)
+    order: int = 4  # Taylor series order (hwnode only)
+    activation: str = "relu_squared"  # pointwise nonlinearity
 
 
 @dataclass
@@ -28,9 +31,9 @@ class PPOConfig:
     entropy_coeff: float = 0.01
     value_coeff: float = 0.5
     max_grad_norm: float = 0.5
-    num_epochs: int = 4              # PPO update epochs per rollout
-    batch_size: int = 64             # minibatch size
-    rollout_steps: int = 2048        # steps per rollout
+    num_epochs: int = 4  # PPO update epochs per rollout
+    batch_size: int = 64  # minibatch size
+    rollout_steps: int = 2048  # steps per rollout
 
 
 @dataclass
@@ -40,12 +43,12 @@ class ExperimentConfig:
     env_id: str = "CartPole-v1"
     total_timesteps: int = 500_000
     seed: int = 42
-    num_seeds: int = 5               # for sweep mode
+    num_seeds: int = 5  # for sweep mode
     wandb_project: str = "hwnode-research"
     use_wandb: bool = True
-    log_interval: int = 1            # log every N updates
-    save_interval: int = 50          # checkpoint every N updates
-    device: str = "cpu"              # auto-detected at runtime
+    log_interval: int = 1  # log every N updates
+    save_interval: int = 50  # checkpoint every N updates
+    device: str = "cpu"  # auto-detected at runtime
 
     model: ModelConfig = field(default_factory=ModelConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
