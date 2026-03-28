@@ -1,7 +1,7 @@
-"""Compare HW-NODE variants against MLP at matched hdim on Pendulum-v1.
+"""1:1 comparison: HW-NODE vs MLP on Pendulum-v1.
 
-All configs use hdim=32. HW-NODE naturally has ~half the params due to
-weight sharing. Tests whether the inductive bias compensates.
+Same hdim, same state_dim, same num_blocks. HW-NODE uses weight sharing
+across virtual layers so it has fewer params — that's the point.
 
 Usage:
     PYTHONPATH=. python experiments/pendulum_comparison.py --no-wandb
@@ -17,7 +17,7 @@ from experiments.taylor_vs_chebyshev import FlexActorCritic, train_agent
 
 
 def main():
-    parser = argparse.ArgumentParser(description="HW-NODE vs MLP at matched hdim")
+    parser = argparse.ArgumentParser(description="HW-NODE vs MLP 1:1 comparison")
     parser.add_argument("--env", type=str, default="Pendulum-v1")
     parser.add_argument("--max-seconds", type=int, default=180)
     parser.add_argument("--num-seeds", type=int, default=5)
@@ -32,46 +32,27 @@ def main():
     act_dim = env_tmp.action_space.shape[0] if continuous else env_tmp.action_space.n
     env_tmp.close()
 
-    # All hdim=32. HW-NODE variants explore virtual depth × bottleneck × Taylor order.
-    configs = [
-        ("mlp-baseline", MLPNetwork, dict(hidden_dim=32, num_blocks=2)),
-        (
-            "hwnode-wide-shallow",
-            HWNodeNetwork,
-            dict(hidden_dim=32, state_dim=32, num_blocks=1, order=4),
-        ),
-        (
-            "hwnode-wide-deep",
-            HWNodeNetwork,
-            dict(hidden_dim=32, state_dim=32, num_blocks=6, order=4),
-        ),
-        (
-            "hwnode-mid-shallow",
-            HWNodeNetwork,
-            dict(hidden_dim=32, state_dim=24, num_blocks=1, order=4),
-        ),
-        (
-            "hwnode-mid-deep",
-            HWNodeNetwork,
-            dict(hidden_dim=32, state_dim=24, num_blocks=6, order=4),
-        ),
-        (
-            "hwnode-tight-deep",
-            HWNodeNetwork,
-            dict(hidden_dim=32, state_dim=16, num_blocks=8, order=4),
-        ),
-        (
-            "hwnode-high-order",
-            HWNodeNetwork,
-            dict(hidden_dim=32, state_dim=16, num_blocks=2, order=8),
-        ),
-    ]
+    HDIM = 32
+    SDIM = 32  # same as hdim for 1:1 fair comparison
+
+    # num_blocks = virtual depth for HW-NODE, physical layers for MLP.
+    depths = [1, 2, 4, 8]
+
+    configs = []
+    for d in depths:
+        configs.append((f"mlp-d{d}", MLPNetwork, dict(hidden_dim=HDIM, num_blocks=d)))
+        configs.append(
+            (
+                f"hwnode-d{d}",
+                HWNodeNetwork,
+                dict(hidden_dim=HDIM, state_dim=SDIM, num_blocks=d, order=4),
+            )
+        )
 
     # Verify param counts
-    print(
-        f"\n{'Config':>22} | {'Params':>8} | {'sdim':>4} | {'depth':>5} | {'order':>5}"
-    )
-    print("-" * 55)
+    print(f"\nhdim={HDIM}, state_dim={SDIM}")
+    print(f"\n{'Config':>18} | {'Params':>8} | {'depth':>5}")
+    print("-" * 40)
     for name, Backbone, kwargs in configs:
         model = FlexActorCritic(
             obs_dim=obs_dim,
@@ -81,10 +62,7 @@ def main():
             **kwargs,
         )
         p = sum(x.numel() for x in model.parameters() if x.requires_grad)
-        print(
-            f"{name:>22} | {p:>8,} | {kwargs.get('state_dim', '—'):>4} | "
-            f"{kwargs['num_blocks']:>5} | {kwargs.get('order', '—'):>5}"
-        )
+        print(f"{name:>18} | {p:>8,} | {kwargs['num_blocks']:>5}")
 
     print(f"\n{'=' * 60}")
     print(f" Pendulum-v1 | Budget: {args.max_seconds}s | Seeds: {args.num_seeds}")
@@ -94,17 +72,6 @@ def main():
 
     for name, Backbone, kwargs in configs:
         rewards = []
-        # Compute params once (same for all seeds)
-        _ref = FlexActorCritic(
-            obs_dim=obs_dim,
-            act_dim=act_dim,
-            BackboneClass=Backbone,
-            continuous=continuous,
-            **kwargs,
-        )
-        params = sum(x.numel() for x in _ref.parameters() if x.requires_grad)
-        del _ref
-
         for seed in range(args.num_seeds):
             model = FlexActorCritic(
                 obs_dim=obs_dim,
@@ -123,22 +90,35 @@ def main():
                 label=f"{name}-s{seed}",
             )
             rewards.append(res["final_mean_reward"])
-        mu, sd = np.mean(rewards), np.std(rewards)
-        all_results.append({"name": name, "params": params, "mean": mu, "std": sd})
-        print(f"  {name:>22}  {params:>6,} params  {mu:>7.1f} ± {sd:<5.1f}")
 
-    # Summary
+        params = sum(x.numel() for x in model.parameters() if x.requires_grad)
+        mu, sd = np.mean(rewards), np.std(rewards)
+        all_results.append(
+            {
+                "name": name,
+                "params": params,
+                "depth": kwargs["num_blocks"],
+                "mean": mu,
+                "std": sd,
+            }
+        )
+        print(f"  {name:>18}  {params:>6,} params  {mu:>7.1f} ± {sd:<5.1f}")
+
+    # Summary grouped by depth
     print(f"\n{'=' * 60}")
-    print(f" RESULTS (sorted by reward)")
+    print(f" RESULTS")
     print(f"{'=' * 60}")
-    print(f"{'Config':>22} | {'Params':>8} | {'vs MLP':>8} | {'Reward':>14}")
-    print("-" * 60)
-    mlp_reward = next(r["mean"] for r in all_results if r["name"] == "mlp-baseline")
-    for r in sorted(all_results, key=lambda x: x["mean"], reverse=True):
-        delta = r["mean"] - mlp_reward
+    for d in depths:
+        mlp = next(r for r in all_results if r["name"] == f"mlp-d{d}")
+        hw = next(r for r in all_results if r["name"] == f"hwnode-d{d}")
+        delta = hw["mean"] - mlp["mean"]
         sign = "+" if delta >= 0 else ""
+        print(f"\n  depth={d}:")
         print(
-            f"{r['name']:>22} | {r['params']:>8,} | {sign}{delta:>6.1f} | {r['mean']:>7.1f} ± {r['std']:<5.1f}"
+            f"    mlp:    {mlp['params']:>6,} params  {mlp['mean']:>7.1f} ± {mlp['std']:<5.1f}"
+        )
+        print(
+            f"    hwnode: {hw['params']:>6,} params  {hw['mean']:>7.1f} ± {hw['std']:<5.1f}  ({sign}{delta:.1f} vs MLP)"
         )
 
 
