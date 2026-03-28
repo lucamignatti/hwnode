@@ -1,6 +1,7 @@
-"""Binary search for the MLP param budget yielding ~50% Pendulum reward.
+"""Find the MLP param budget yielding ~50% Pendulum reward.
 
-Narrows hdim (num_blocks=2) with 1 seed each, then validates with 2 more.
+Sweeps a coarse grid of hdim with 3 seeds each, then reports
+the budget where mean reward crosses the halfway threshold.
 
 Usage:
     PYTHONPATH=. python experiments/mlp_param_sweep.py --no-wandb
@@ -15,12 +16,11 @@ from experiments.taylor_vs_chebyshev import FlexActorCritic, train_agent
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Binary search MLP param budget")
+    parser = argparse.ArgumentParser(description="Coarse MLP param budget sweep")
     parser.add_argument("--env", type=str, default="Pendulum-v1")
     parser.add_argument("--max-seconds", type=int, default=180)
     parser.add_argument("--num-blocks", type=int, default=2)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--validation-seeds", type=int, default=2)
+    parser.add_argument("--num-seeds", type=int, default=3)
     parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()
 
@@ -33,70 +33,74 @@ def main():
     act_dim = env_tmp.action_space.shape[0] if continuous else env_tmp.action_space.n
     env_tmp.close()
 
-    def run_one(hdim, seed):
-        model = FlexActorCritic(
-            obs_dim=obs_dim,
-            act_dim=act_dim,
-            BackboneClass=MLPNetwork,
-            continuous=continuous,
-            hidden_dim=hdim,
-            num_blocks=args.num_blocks,
+    # Coarse grid — fill in between hdim=23 (too low) and hdim=35 (at target)
+    hdim_grid = [20, 24, 28, 32, 36]
+
+    print(f"\nCoarse sweep on {env_id}")
+    print(f"hdim grid: {hdim_grid} | num_blocks={args.num_blocks}")
+    print(f"Seeds: {args.num_seeds} | Budget: {args.max_seconds}s/run")
+    print(f"Target reward: {target_reward}\n")
+
+    results = {}
+
+    for hdim in hdim_grid:
+        rewards = []
+        params = 0
+        for seed in range(args.num_seeds):
+            model = FlexActorCritic(
+                obs_dim=obs_dim,
+                act_dim=act_dim,
+                BackboneClass=MLPNetwork,
+                continuous=continuous,
+                hidden_dim=hdim,
+                num_blocks=args.num_blocks,
+            )
+            params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+            res = train_agent(
+                env_id=env_id,
+                model=model,
+                seed=seed,
+                total_timesteps=10_000_000,
+                max_wallclock_seconds=args.max_seconds,
+                wandb_run=None,
+                label=f"mlp-h{hdim}-s{seed}",
+            )
+            rewards.append(res["final_mean_reward"])
+
+        mu = np.mean(rewards)
+        sd = np.std(rewards)
+        results[hdim] = {"params": params, "mean": mu, "std": sd}
+        marker = " <<<" if mu >= target_reward else ""
+        print(
+            f"  hdim={hdim:>3}  params={params:>6,}  reward={mu:>7.1f} ± {sd:<5.1f}{marker}"
         )
-        params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        res = train_agent(
-            env_id=env_id,
-            model=model,
-            seed=seed,
-            total_timesteps=10_000_000,
-            max_wallclock_seconds=args.max_seconds,
-            wandb_run=None,
-            label=f"mlp-h{hdim}",
+
+    # Summary
+    print(f"\n{'=' * 55}")
+    print(f" RESULTS")
+    print(f"{'=' * 55}")
+    for hdim, r in results.items():
+        marker = " <<<" if r["mean"] >= target_reward else ""
+        print(
+            f"  hdim={hdim:>3}  params={r['params']:>6,}  {r['mean']:>7.1f} ± {r['std']:<5.1f}{marker}"
         )
-        return res["final_mean_reward"], params
 
-    # --- Binary search phase ---
-    lo, hi = 6, 40
-    search_log = []
+    # Find threshold
+    threshold = None
+    for hdim in sorted(results):
+        if results[hdim]["mean"] >= target_reward:
+            threshold = hdim
+            break
 
-    print(f"\nBinary search: hdim [{lo}, {hi}], num_blocks={args.num_blocks}")
-    print(f"Budget: {args.max_seconds}s/run | Target reward: {target_reward}")
-    print(f"Env: {env_id}\n")
-
-    while hi - lo > 1:
-        mid = (lo + hi) // 2
-        reward, params = run_one(mid, args.seed)
-        search_log.append((mid, reward, params))
-        marker = " above" if reward >= target_reward else " below"
-        print(f"  hdim={mid:>3}  params={params:>6,}  reward={reward:>7.1f}{marker}")
-
-        if reward >= target_reward:
-            hi = mid
-        else:
-            lo = mid
-
-    # lo is below, hi is at/above. Pick hi as the threshold config.
-    print(f"\nSearch done: threshold between hdim={lo} and hdim={hi}")
-
-    # --- Validation phase ---
-    print(f"\nValidating hdim={hi} with {args.validation_seeds} more seeds...")
-    rewards = []
-    params = 0
-    for i in range(args.validation_seeds):
-        seed = args.seed + 1 + i  # skip the search seed
-        r, p = run_one(hi, seed)
-        rewards.append(r)
-        params = p
-        print(f"  seed {seed}: reward={r:>7.1f}")
-
-    mu = np.mean(rewards)
-    sd = np.std(rewards)
-    print(f"\n{'=' * 50}")
-    print(f" RESULT")
-    print(f"{'=' * 50}")
-    print(f"  hdim={hi}, num_blocks={args.num_blocks}, params={params:,}")
-    print(f"  Reward: {mu:.1f} ± {sd:.1f}")
-    print(f"  Target: {target_reward}")
-    print(f"  Budget: {args.max_seconds}s wall clock per run")
+    print()
+    if threshold:
+        r = results[threshold]
+        print(
+            f"Target budget: ~{r['params']:,} params (hdim={threshold}, reward={r['mean']:.1f})"
+        )
+    else:
+        print("Threshold not reached. Increase hdim range.")
 
 
 if __name__ == "__main__":
