@@ -33,8 +33,8 @@ def main():
     act_dim = env_tmp.action_space.shape[0] if continuous else env_tmp.action_space.n
     env_tmp.close()
 
-    HDIM = 18
-    SDIM = 18
+    HDIM = 32
+    SDIM = 32
 
     configs = [
         ("mlp", MLPNetwork, dict(hidden_dim=HDIM, num_blocks=2)),
@@ -49,7 +49,7 @@ def main():
                     dict(
                         hidden_dim=HDIM,
                         state_dim=SDIM,
-                        num_blocks=2,
+                        num_blocks=3,
                         order=order,
                         virtual_depth=vdepth,
                     ),
